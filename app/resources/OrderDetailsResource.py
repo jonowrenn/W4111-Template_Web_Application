@@ -17,8 +17,24 @@ class OrderDetail(BaseModel):
     orderLineNumber: int | None = None
 
 
+class OrderDetailWithProduct(BaseModel):
+    orderNumber: int
+    productCode: str
+    productName: str
+    productLine: str
+    quantityOrdered: int
+    priceEach: float
+    orderLineNumber: int
+    lineTotal: float
+
+
 class OrderDetailCollection(BaseModel):
     items: list[OrderDetail] = Field(default_factory=list)
+
+
+class OrderDetailWithProductCollection(BaseModel):
+    items: list[OrderDetailWithProduct] = Field(default_factory=list)
+    orderTotal: float = 0.0
 
 
 def _make_service_config(cfg: dict) -> dict:
@@ -34,7 +50,6 @@ def _make_service_config(cfg: dict) -> dict:
 
 
 def _composite_key(order_number: str | int, product_code: str) -> str:
-    """Encode the composite PK as a JSON string for MySQLDataService."""
     return json.dumps({"orderNumber": order_number, "productCode": product_code})
 
 
@@ -44,43 +59,57 @@ class OrderDetailsResource(AbstractBaseResource):
         super().__init__(cfg)
         self._service = MySQLDataService(_make_service_config(cfg))
 
-    def get(self, template: dict) -> OrderDetailCollection:
-        rows = self._service.retrieveByTemplate(template)
+    def get(self, template: dict, limit: int | None = None, offset: int | None = None) -> OrderDetailCollection:
+        rows = self._service.retrieveByTemplate(template, limit=limit, offset=offset)
         return OrderDetailCollection(items=[OrderDetail.model_validate(r) for r in rows])
 
     def get_by_id(self, id: str) -> OrderDetail:  # noqa: A002
-        """id should be a JSON-encoded composite key, e.g. {"orderNumber": 10100, "productCode": "S18_1749"}"""
         row = self._service.retrieveByPrimaryKey(id)
         if not row:
             raise ValueError(f"No order detail with key {id!r}")
         return OrderDetail.model_validate(row)
 
     def get_by_order_and_product(self, order_number: str | int, product_code: str) -> OrderDetail:
-        key = _composite_key(order_number, product_code)
-        return self.get_by_id(key)
+        return self.get_by_id(_composite_key(order_number, product_code))
+
+    def get_by_order_with_products(self, order_number: int) -> OrderDetailWithProductCollection:
+        """Return all details for an order, joined with product info and line totals."""
+        sql = """
+            SELECT
+                od.orderNumber,
+                od.productCode,
+                p.productName,
+                p.productLine,
+                od.quantityOrdered,
+                od.priceEach,
+                od.orderLineNumber,
+                ROUND(od.quantityOrdered * od.priceEach, 2) AS lineTotal
+            FROM orderdetails od
+            JOIN products p ON od.productCode = p.productCode
+            WHERE od.orderNumber = %s
+            ORDER BY od.orderLineNumber
+        """
+        rows = self._service.execute_query(sql, [order_number])
+        items = [OrderDetailWithProduct.model_validate(r) for r in rows]
+        order_total = round(sum(i.lineTotal for i in items), 2)
+        return OrderDetailWithProductCollection(items=items, orderTotal=order_total)
 
     def post(self, new_data: OrderDetail) -> str:
         data = {k: v for k, v in new_data.model_dump().items() if v is not None}
         return self._service.create(data)
 
     def put(self, order_id: str, new_data: OrderDetail) -> int:
-        """order_id must be a JSON-encoded composite key."""
         data = {k: v for k, v in new_data.model_dump().items() if v is not None}
         result = self._service.updateByPrimaryKey(order_id, data)
         if result == 0:
             raise ValueError(f"No order detail with key {order_id!r}")
         return result
 
-    def put_by_order_and_product(
-        self, order_number: str | int, product_code: str, new_data: OrderDetail
-    ) -> int:
-        key = _composite_key(order_number, product_code)
-        return self.put(key, new_data)
+    def put_by_order_and_product(self, order_number: str | int, product_code: str, new_data: OrderDetail) -> int:
+        return self.put(_composite_key(order_number, product_code), new_data)
 
     def delete(self, id: str) -> int:  # noqa: A002
-        """id must be a JSON-encoded composite key."""
         return self._service.deleteByPrimaryKey(id)
 
     def delete_by_order_and_product(self, order_number: str | int, product_code: str) -> int:
-        key = _composite_key(order_number, product_code)
-        return self.delete(key)
+        return self.delete(_composite_key(order_number, product_code))

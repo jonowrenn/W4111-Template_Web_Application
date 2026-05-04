@@ -26,6 +26,7 @@ class Customer(BaseModel):
 
 class CustomerCollection(BaseModel):
     items: list[Customer] = Field(default_factory=list)
+    total: int = 0
 
 
 def _make_service_config(cfg: dict) -> dict:
@@ -46,9 +47,20 @@ class CustomerResource(AbstractBaseResource):
         super().__init__(cfg)
         self._service = MySQLDataService(_make_service_config(cfg))
 
-    def get(self, template: dict) -> CustomerCollection:
-        rows = self._service.retrieveByTemplate(template)
-        return CustomerCollection(items=[Customer.model_validate(r) for r in rows])
+    def get(
+        self,
+        template: dict,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> CustomerCollection:
+        total = self._service.count(template)
+        rows = self._service.retrieveByTemplate(
+            template, limit=limit, offset=offset, order_by="customerNumber"
+        )
+        return CustomerCollection(
+            items=[Customer.model_validate(r) for r in rows],
+            total=total,
+        )
 
     def get_by_id(self, id: str) -> Customer:  # noqa: A002
         row = self._service.retrieveByPrimaryKey(str(id))

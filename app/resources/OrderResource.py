@@ -21,6 +21,7 @@ class Order(BaseModel):
 
 class OrderCollection(BaseModel):
     items: list[Order] = Field(default_factory=list)
+    total: int = 0
 
 
 def _make_service_config(cfg: dict) -> dict:
@@ -41,9 +42,20 @@ class OrderResource(AbstractBaseResource):
         super().__init__(cfg)
         self._service = MySQLDataService(_make_service_config(cfg))
 
-    def get(self, template: dict) -> OrderCollection:
-        rows = self._service.retrieveByTemplate(template)
-        return OrderCollection(items=[Order.model_validate(r) for r in rows])
+    def get(
+        self,
+        template: dict,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> OrderCollection:
+        total = self._service.count(template)
+        rows = self._service.retrieveByTemplate(
+            template, limit=limit, offset=offset, order_by="orderNumber"
+        )
+        return OrderCollection(
+            items=[Order.model_validate(r) for r in rows],
+            total=total,
+        )
 
     def get_by_id(self, id: str) -> Order:  # noqa: A002
         row = self._service.retrieveByPrimaryKey(str(id))
@@ -53,7 +65,6 @@ class OrderResource(AbstractBaseResource):
 
     def post(self, new_data: Order) -> str:
         data = {k: v for k, v in new_data.model_dump().items() if v is not None}
-        # Convert date objects to ISO strings for MySQL
         for field in ("orderDate", "requiredDate", "shippedDate"):
             if field in data and isinstance(data[field], date):
                 data[field] = data[field].isoformat()

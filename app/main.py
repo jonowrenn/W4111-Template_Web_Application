@@ -4,7 +4,12 @@ import os
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 if __package__ in (None, ""):
@@ -19,8 +24,10 @@ if __package__ in (None, ""):
     from app.resources.OrderDetailsResource import (
         OrderDetail,
         OrderDetailCollection,
+        OrderDetailWithProductCollection,
         OrderDetailsResource,
     )
+    from app.services.MySQLDataService import MySQLDataService
 else:
     from .resources.HarryPotterResource import (
         HarryPotterCharacter,
@@ -32,20 +39,44 @@ else:
     from .resources.OrderDetailsResource import (
         OrderDetail,
         OrderDetailCollection,
+        OrderDetailWithProductCollection,
         OrderDetailsResource,
     )
+    from .services.MySQLDataService import MySQLDataService
 
 
 def _get_app_name() -> str:
-    return os.getenv("APP_NAME", "W4111 ClassicModels API")
+    return os.getenv("APP_NAME", "ClassicModels REST API")
 
 
-app = FastAPI(title=_get_app_name(), version="0.1.0")
+app = FastAPI(
+    title=_get_app_name(),
+    version="1.0.0",
+    description=(
+        "A production-style REST API exposing the ClassicModels sample database. "
+        "Supports full CRUD for customers, orders, and order details, "
+        "plus relationship traversal and analytics endpoints."
+    ),
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 harry_potter_resource = HarryPotterResource()
 customer_resource = CustomerResource()
 order_resource = OrderResource()
 order_details_resource = OrderDetailsResource()
+
+# Shared service for raw analytics queries
+_db_cfg: dict = {
+    "table": "customers",  # placeholder; execute_query ignores it
+    "primary_key_fields": ["id"],
+}
+_stats_service = MySQLDataService(_db_cfg)
 
 
 class EchoRequest(BaseModel):
@@ -53,12 +84,16 @@ class EchoRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Built-in routes
+# Built-in
 # ---------------------------------------------------------------------------
 
 @app.get("/", tags=["root"])
 def read_root() -> dict[str, str]:
-    return {"message": "Hello from FastAPI"}
+    return {
+        "message": "ClassicModels REST API",
+        "docs": "/docs",
+        "health": "/health",
+    }
 
 
 @app.get("/health", tags=["health"])
@@ -72,7 +107,54 @@ def echo(payload: EchoRequest) -> EchoRequest:
 
 
 # ---------------------------------------------------------------------------
-# Harry Potter (example — provided by template)
+# Stats / analytics
+# ---------------------------------------------------------------------------
+
+@app.get("/stats", tags=["analytics"])
+def get_stats() -> dict:
+    """High-level analytics: totals, revenue, and order status breakdown."""
+    total_customers = _stats_service.execute_query(
+        "SELECT COUNT(*) AS n FROM customers"
+    )[0]["n"]
+
+    total_orders = _stats_service.execute_query(
+        "SELECT COUNT(*) AS n FROM orders"
+    )[0]["n"]
+
+    revenue_row = _stats_service.execute_query(
+        "SELECT ROUND(SUM(quantityOrdered * priceEach), 2) AS revenue FROM orderdetails"
+    )[0]
+    total_revenue = float(revenue_row["revenue"] or 0)
+
+    status_rows = _stats_service.execute_query(
+        "SELECT status, COUNT(*) AS count FROM orders GROUP BY status ORDER BY count DESC"
+    )
+    orders_by_status = {r["status"]: r["count"] for r in status_rows}
+
+    top_customers = _stats_service.execute_query(
+        """
+        SELECT c.customerNumber, c.customerName,
+               ROUND(SUM(od.quantityOrdered * od.priceEach), 2) AS totalSpent
+        FROM customers c
+        JOIN orders o ON c.customerNumber = o.customerNumber
+        JOIN orderdetails od ON o.orderNumber = od.orderNumber
+        GROUP BY c.customerNumber, c.customerName
+        ORDER BY totalSpent DESC
+        LIMIT 5
+        """
+    )
+
+    return {
+        "total_customers": total_customers,
+        "total_orders": total_orders,
+        "total_revenue": total_revenue,
+        "orders_by_status": orders_by_status,
+        "top_customers_by_revenue": top_customers,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Harry Potter (template example — kept for reference)
 # ---------------------------------------------------------------------------
 
 @app.get("/harry-potter", tags=["harry-potter"])
@@ -130,6 +212,8 @@ def get_customers(
     city: str | None = None,
     country: str | None = None,
     state: str | None = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> CustomerCollection:
     template: dict = {}
     if customerName is not None:
@@ -140,7 +224,7 @@ def get_customers(
         template["country"] = country
     if state is not None:
         template["state"] = state
-    return customer_resource.get(template)
+    return customer_resource.get(template, limit=limit, offset=offset)
 
 
 @app.post("/customers", tags=["customers"])
@@ -168,8 +252,25 @@ def update_customer(customerNumber: int, new_data: Customer) -> dict[str, int]:
 
 @app.delete("/customers/{customerNumber}", tags=["customers"])
 def delete_customer(customerNumber: int) -> dict[str, int]:
-    deleted = customer_resource.delete(str(customerNumber))
-    return {"deleted": deleted}
+    return {"deleted": customer_resource.delete(str(customerNumber))}
+
+
+@app.get("/customers/{customerNumber}/orders", tags=["customers"])
+def get_orders_for_customer(
+    customerNumber: int,
+    status: str | None = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> OrderCollection:
+    """All orders belonging to a specific customer."""
+    try:
+        customer_resource.get_by_id(str(customerNumber))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    template: dict = {"customerNumber": customerNumber}
+    if status is not None:
+        template["status"] = status
+    return order_resource.get(template, limit=limit, offset=offset)
 
 
 # ---------------------------------------------------------------------------
@@ -180,13 +281,15 @@ def delete_customer(customerNumber: int) -> dict[str, int]:
 def get_orders(
     customerNumber: int | None = None,
     status: str | None = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> OrderCollection:
     template: dict = {}
     if customerNumber is not None:
         template["customerNumber"] = customerNumber
     if status is not None:
         template["status"] = status
-    return order_resource.get(template)
+    return order_resource.get(template, limit=limit, offset=offset)
 
 
 @app.post("/orders", tags=["orders"])
@@ -214,8 +317,7 @@ def update_order(orderNumber: int, new_data: Order) -> dict[str, int]:
 
 @app.delete("/orders/{orderNumber}", tags=["orders"])
 def delete_order(orderNumber: int) -> dict[str, int]:
-    deleted = order_resource.delete(str(orderNumber))
-    return {"deleted": deleted}
+    return {"deleted": order_resource.delete(str(orderNumber))}
 
 
 # ---------------------------------------------------------------------------
@@ -226,13 +328,15 @@ def delete_order(orderNumber: int) -> dict[str, int]:
 def get_order_details(
     orderNumber: int | None = None,
     productCode: str | None = None,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> OrderDetailCollection:
     template: dict = {}
     if orderNumber is not None:
         template["orderNumber"] = orderNumber
     if productCode is not None:
         template["productCode"] = productCode
-    return order_details_resource.get(template)
+    return order_details_resource.get(template, limit=limit, offset=offset)
 
 
 @app.post("/orderdetails", tags=["orderdetails"])
@@ -242,8 +346,13 @@ def create_order_detail(new_data: OrderDetail) -> dict[str, str]:
 
 
 @app.get("/orders/{orderNumber}/orderdetails", tags=["orderdetails"])
-def get_order_details_by_order(orderNumber: int) -> OrderDetailCollection:
-    return order_details_resource.get({"orderNumber": orderNumber})
+def get_order_details_by_order(orderNumber: int) -> OrderDetailWithProductCollection:
+    """All line items for an order, enriched with product name and line totals."""
+    try:
+        order_resource.get_by_id(str(orderNumber))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return order_details_resource.get_by_order_with_products(orderNumber)
 
 
 @app.get("/orders/{orderNumber}/orderdetails/{productCode}", tags=["orderdetails"])

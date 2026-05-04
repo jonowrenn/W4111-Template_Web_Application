@@ -1,106 +1,205 @@
-# W4111 Web Application Project
+# ClassicModels REST API
 
-This repository is the **starter template** for the course web application assignment. You will fork or clone it and implement a complete, production-style data-backed service on top of the skeleton provided here.
+A production-style REST API built with **FastAPI** and **MySQL**, exposing the [ClassicModels](https://www.mysqltutorial.org/mysql-sample-database/) sample database as a clean, fully-documented HTTP service.
 
-## Project goal
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.114+-009688?logo=fastapi&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-8.0+-4479A1?logo=mysql&logoColor=white)
+![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-000000?logo=vercel&logoColor=white)
 
-Design and implement a **REST API** backed by **MySQL** that exposes **customer**, **order**, and **order-detail** data from the **`classicmodels`** database (**Tasks 1–6**). The API must support **querying, creating, updating, and deleting** records while preserving a **clean separation** between HTTP handling, application/resource logic, and persistence. Your instructor may require additional domains or endpoints beyond this core scope.
+**Live API & Interactive Docs:** `https://<your-app>.vercel.app/docs`
 
-The starter demonstrates one possible domain (**Harry Potter characters**) with **JSON file** storage. Your job is to implement **`MySQLDataService`**, **`CustomerResource`**, **`OrderResource`**, and **`OrderDetailsResource`** against the **`classicmodels`** MySQL database (see Tasks 1–4), wire the required HTTP routes in **`main.py`** (Task 5), provide a **Jupyter Notebook** that exercises your code (Task 6), then satisfy the remaining deliverables below.
+---
 
-## Assignment tasks
+## Features
 
-**Task 1 — `MySQLDataService`.** Extend `AbstractBaseDataService` and implement a concrete **`MySQLDataService`** that reads and writes data in **MySQL**. Use **`JSONFileDataService`** (`app/services/JSONFileDataService.py`) as your example: mirror how each abstract method maps to storage operations (`retrieveByPrimaryKey`, `retrieveByTemplate`, `create`, `updateByPrimaryKey`, `deleteByPrimaryKey`). Database connection settings (host, port, user, password, database name, etc.) must come from **environment variables** or another approved configuration mechanism—never hard-code credentials.
+- **Full CRUD** for Customers, Orders, and Order Details via a clean layered architecture
+- **Pagination** (`limit` / `offset`) on every list endpoint with total count in response
+- **Relationship traversal** — `GET /customers/{id}/orders` to navigate the data model
+- **Enriched order details** — `GET /orders/{id}/orderdetails` joins product names, product lines, and computes per-line totals
+- **Analytics endpoint** — `GET /stats` returns revenue, order counts by status, and top 5 customers by spend
+- **Consistent error responses** — 404 / 400 with descriptive messages throughout
+- **CORS enabled** — ready to be called from any frontend
+- **Interactive Swagger UI** at `/docs`, auto-generated from code
 
-**Task 2 — `CustomerResource`.** Extend `AbstractBaseResource` and implement **`CustomerResource`** for customer records. Use **`HarryPotterResource`** (`app/resources/HarryPotterResource.py`) as your example for how a resource wires Pydantic models to a data service and implements `get`, `get_by_id`, `post`, `put`, and `delete`. **`CustomerResource` must use `MySQLDataService`** (Task 1) configured to access the **`classicmodels`** database—i.e., persistence for customers goes through MySQL and that schema, not the JSON file.
+---
 
-**Task 3 — `OrderResource`.** Extend `AbstractBaseResource` and implement **`OrderResource`** for order records, following the same pattern as Task 2. Use **`HarryPotterResource`** as your example. **`OrderResource` must use `MySQLDataService`** (Task 1) against **`classicmodels`**—persistence for orders goes through MySQL and that schema, not the JSON file.
+## Architecture
 
-**Task 4 — `OrderDetailsResource`.** Extend `AbstractBaseResource` and implement **`OrderDetailsResource`** for order-line / order-detail records, following the same pattern as Tasks 2–3. Use **`HarryPotterResource`** as your example. **`OrderDetailsResource` must use `MySQLDataService`** (Task 1) against **`classicmodels`**—persistence goes through MySQL and the **`orderdetails`** table (and its keys), not the JSON file.
+```
+HTTP Request
+     │
+     ▼
+app/main.py          ← FastAPI route handlers (thin, no business logic)
+     │
+     ▼
+app/resources/       ← Pydantic models + orchestration per domain
+  CustomerResource
+  OrderResource
+  OrderDetailsResource
+     │
+     ▼
+app/services/        ← Data access layer
+  MySQLDataService   ← Parameterized SQL, single/composite PKs, pagination
+     │
+     ▼
+MySQL (classicmodels schema on Railway)
+```
 
-**Task 5 — HTTP routes in `main.py`.** Register the routes below on the FastAPI app in **`app/main.py`**. Use the existing **Harry Potter** routes as examples: **`GET /harry-potter`** (optional query parameters as an equality template), **`POST /harry-potter`**, and **`GET`**, **`PUT`**, and **`DELETE`** on **`/harry-potter/{character_id}`** for path parameters and delegation to your resource layer. Path segments in `{curly braces}` are **path parameters** (`customerNumber`, `orderNumber`, etc.).
+---
 
-**Collection endpoints** — Implement **`GET`** and **`POST`** on each of these paths:
+## API Reference
 
-| Resource | Path | Methods |
-|----------|------|---------|
-| Customers | `/customers` | GET, POST |
-| Orders | `/orders` | GET, POST |
-| OrderDetails | `/orderdetails` | GET, POST |
+### Root
 
-**`GET`** on a collection should support listing / searching (e.g., optional query parameters matching your resource’s template semantics, following the Harry Potter **`GET /harry-potter`** pattern). **`POST`** should create a new row via the corresponding resource’s **`post`** method (following **`POST /harry-potter`**).
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | API info |
+| GET | `/health` | Health check |
+| GET | `/stats` | Analytics: revenue, order counts, top customers |
 
-**Single-resource endpoints** — Implement **`GET`**, **`PUT`**, and **`DELETE`** on each path below. **`GET`** uses **`get_by_id`** (or equivalent); **`PUT`** replaces or updates the row via **`put`**; **`DELETE`** removes it via **`delete`**. Follow the Harry Potter **`PUT`** / **`DELETE`** patterns on **`/harry-potter/{character_id}`**. Return appropriate status codes (e.g., **`404`** when the row does not exist, **`400`** when the update is invalid).
+### Customers
 
-| Resource | Path | Methods |
-|----------|------|---------|
-| Customers | `/customers/{customerNumber}` | GET, PUT, DELETE |
-| Orders | `/orders/{orderNumber}` | GET, PUT, DELETE |
-| OrderDetails | `/orders/{orderNumber}/orderdetails` | GET, PUT, DELETE |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/customers` | List customers (filter by `customerName`, `city`, `country`, `state`; paginate with `limit`/`offset`) |
+| POST | `/customers` | Create a customer |
+| GET | `/customers/{customerNumber}` | Get one customer |
+| PUT | `/customers/{customerNumber}` | Update a customer |
+| DELETE | `/customers/{customerNumber}` | Delete a customer |
+| GET | `/customers/{customerNumber}/orders` | All orders for a customer |
 
-Each handler should call the appropriate **`CustomerResource`**, **`OrderResource`**, or **`OrderDetailsResource`** method(s) from Tasks 2–4 and return suitable response models and HTTP status codes. If **`orderdetails`** rows are identified by a **composite primary key** in **`classicmodels`**, your **`PUT`** / **`DELETE`** (and **`GET`**) routes must identify a single row unambiguously—e.g., extra path segments such as **`/orders/{orderNumber}/orderdetails/{productCode}`**—per instructor guidance.
+### Orders
 
-**Task 6 — Jupyter Notebook.** Submit a **Jupyter Notebook** whose **cells** test and demonstrate your work: invoke your **resource** and/or **data service** methods directly and/or call your **HTTP API** (e.g., with **`httpx`** or **`requests`** while the FastAPI app is running). Cells should be **runnable in order** and clearly show inputs and outputs for the behaviors you implemented.
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/orders` | List orders (filter by `customerNumber`, `status`; paginate) |
+| POST | `/orders` | Create an order |
+| GET | `/orders/{orderNumber}` | Get one order |
+| PUT | `/orders/{orderNumber}` | Update an order |
+| DELETE | `/orders/{orderNumber}` | Delete an order |
 
-## What you must deliver
+### Order Details
 
-1. **Task 1 (`MySQLDataService`)** — Completed as described above; your implementation must satisfy the `AbstractBaseDataService` contract.
-2. **Task 2 (`CustomerResource`)** — Completed as described above; customers are served from **`classicmodels`** via **`MySQLDataService`**.
-3. **Task 3 (`OrderResource`)** — Completed as described above; orders are served from **`classicmodels`** via **`MySQLDataService`**.
-4. **Task 4 (`OrderDetailsResource`)** — Completed as described above; order details are served from **`classicmodels`** (e.g., **`orderdetails`** via **`MySQLDataService`**).
-5. **Task 5 (routes in `main.py`)** — **`GET`** and **`POST`** on **`/customers`**, **`/orders`**, and **`/orderdetails`** (collection endpoints), plus **`GET`**, **`PUT`**, and **`DELETE`** on each single-resource path under Task 5; all are implemented and wired to your resources.
-6. **Working HTTP API** — Endpoints are stable, return appropriate status codes and JSON bodies, and behave correctly for success and common failure cases (e.g., missing resources return `404`, invalid input returns `400`).
-7. **Layered implementation** — Keep the pattern used in the template:
-   - **Resource** layer: Pydantic models and orchestration (`AbstractBaseResource` subclasses), including **`CustomerResource`** (Task 2), **`OrderResource`** (Task 3), and **`OrderDetailsResource`** (Task 4).
-   - **Data service** layer: CRUD and queries (`AbstractBaseDataService` subclasses), using **`MySQLDataService`** against **`classicmodels`** where persistence is required.
-   - **Application entrypoint** (`app/main.py`): route definitions only (including Task 5); minimal business logic in route handlers.
-8. **Task 6 (Jupyter Notebook)** — Completed as described above; notebook cells test or demonstrate your methods and/or endpoints.
-9. **Configuration** — Use environment variables (see `.env.example`) for anything environment-specific: app name, host/port, **MySQL connection parameters** (including database name **`classicmodels`** for this assignment), file paths, etc. Do not commit secrets.
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/orderdetails` | List order details (filter by `orderNumber`, `productCode`; paginate) |
+| POST | `/orderdetails` | Create an order detail |
+| GET | `/orders/{orderNumber}/orderdetails` | All line items for an order, joined with product name + line totals |
+| GET | `/orders/{orderNumber}/orderdetails/{productCode}` | Single order detail |
+| PUT | `/orders/{orderNumber}/orderdetails/{productCode}` | Update an order detail |
+| DELETE | `/orders/{orderNumber}/orderdetails/{productCode}` | Delete an order detail |
 
-## Starter vs your work
+---
 
-| Provided in the template | You implement |
-|---------------------------|----------------|
-| FastAPI app, `/health`, `/`, `/echo`; Harry Potter routes as examples | **Task 5**: **`GET`**/**`POST`** **`/customers`**, **`/orders`**, **`/orderdetails`**; **`GET`**/**`PUT`**/**`DELETE`** **`/customers/{customerNumber}`**, **`/orders/{orderNumber}`**, **`/orders/{orderNumber}/orderdetails`** (or composite-key paths per Task 5) |
-| `HarryPotterResource` + sample JSON data (reference only) | **`CustomerResource`** (Task 2), **`OrderResource`** (Task 3), and **`OrderDetailsResource`** (Task 4), all backed by **`MySQLDataService`** |
-| `JSONFileDataService` (reference only) | **`MySQLDataService`** (Task 1) targeting **`classicmodels`** |
-| Abstract base classes for resource and data service | Concrete classes matching your API contract |
-| *(no Jupyter Notebook in the starter)* | **Task 6** — Jupyter Notebook (`.ipynb`) whose cells test your methods and/or API |
-
-## Functional expectations (illustrated by the sample)
-
-The Harry Potter sample shows the kind of surface your own API should provide:
-
-- **List / search** — `GET` with optional query parameters acting as an equality template over fields.
-- **Read one** — `GET` by primary key; `404` when missing.
-- **Create** — `POST` with a body; server assigns an identifier when omitted.
-- **Update** — `PUT` by primary key; reflect conflicts or missing rows per your spec.
-- **Delete** — `DELETE` by primary key; response indicates whether a row was removed.
-
-**Task 5** requires **`GET`** and **`POST`** on **`/customers`**, **`/orders`**, and **`/orderdetails`**, plus **`GET`**, **`PUT`**, and **`DELETE`** on each single-resource route in the Task 5 section (customers and orders by id, and order-scoped order details—or composite-key paths as specified in Task 5).
-
-Apply the same expectations to your **customer** endpoints (**`CustomerResource`**, **`customers`** table), **order** endpoints (**`OrderResource`**, **`orders`** table), and **order-detail** endpoints (**`OrderDetailsResource`**, **`orderdetails`** table) in **`classicmodels`**. If a table uses a **composite primary key**, your routes and resource models must reflect that (e.g., multiple path or query parameters), per instructor guidance.
-
-Your domain may require additional operations (pagination, joins, aggregates); document them in your API and notebook.
-
-## Local setup
+## Quick Examples
 
 ```bash
+# List US customers, 10 per page
+curl "https://<your-app>.vercel.app/customers?country=USA&limit=10"
+
+# Get all orders for customer 103
+curl "https://<your-app>.vercel.app/customers/103/orders"
+
+# Get order 10100's line items with product details and totals
+curl "https://<your-app>.vercel.app/orders/10100/orderdetails"
+
+# Analytics snapshot
+curl "https://<your-app>.vercel.app/stats"
+```
+
+---
+
+## Local Setup
+
+```bash
+git clone https://github.com/jonowrenn/W4111-Template_Web_Application
+cd W4111-Template_Web_Application
+
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
+
+cp .env.example .env
+# Edit .env with your MySQL credentials
+
+python -m app.main
+# → http://localhost:8000/docs
 ```
 
-Run the server (defaults in code: host `0.0.0.0`, port `8000`):
+### Loading the ClassicModels data
 
 ```bash
-python -m app.main
+python scripts/load_classicmodels.py
 ```
 
-Open your Jupyter Notebook (install Jupyter in your environment if needed: `pip install notebook` or `pip install jupyterlab`), run the server in another terminal if your cells call HTTP endpoints, then execute the notebook cells top to bottom.
+This downloads the ClassicModels SQL dump from mysqltutorial.org and imports it into your configured database automatically.
 
-Interactive docs: open `/docs` once the server is running.
+---
 
-## Academic integrity
+## Deployment
 
-Follow your instructor’s collaboration and citation rules. The abstract interfaces and layout of this template are provided as scaffolding; **your domain logic, schema, notebook, and written materials must be your own** unless the assignment permits otherwise.
+### Vercel (API)
+
+```bash
+npm i -g vercel
+vercel login
+vercel --prod
+```
+
+Set environment variables in the Vercel dashboard (or via `vercel env add`):
+
+```
+MYSQL_HOST=<your-db-host>
+MYSQL_PORT=<port>
+MYSQL_USER=<user>
+MYSQL_PASSWORD=<password>
+MYSQL_DATABASE=<database>
+```
+
+### Database (Railway)
+
+1. Create a project at [railway.app](https://railway.app) (GitHub login)
+2. Add a MySQL service
+3. Enable TCP Proxy under Settings → Networking
+4. Use the proxy host/port as `MYSQL_HOST` / `MYSQL_PORT`
+5. Run `python scripts/load_classicmodels.py` to import the data
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| API framework | FastAPI + Uvicorn |
+| Data validation | Pydantic v2 |
+| Database | MySQL 8 (classicmodels schema) |
+| DB driver | PyMySQL |
+| Hosting — API | Vercel (Python runtime) |
+| Hosting — DB | Railway |
+| Config | python-dotenv / environment variables |
+
+---
+
+## Project Structure
+
+```
+app/
+  main.py                    # FastAPI app, route definitions
+  resources/
+    AbstractBaseResource.py  # Base class for all resources
+    CustomerResource.py      # Customer CRUD + Pydantic models
+    OrderResource.py         # Order CRUD + Pydantic models
+    OrderDetailsResource.py  # OrderDetail CRUD, composite PK, JOIN queries
+    HarryPotterResource.py   # Template example (JSON-backed)
+  services/
+    AbstractBaseDataService.py  # Abstract data service interface
+    MySQLDataService.py         # MySQL implementation with pagination + raw queries
+    JSONFileDataService.py      # JSON file implementation (template example)
+api/
+  index.py                   # Vercel entry point
+scripts/
+  load_classicmodels.py      # One-command data import
+tests/
+  hw4_notebook.ipynb         # Demo notebook — runs all endpoints top to bottom
+```

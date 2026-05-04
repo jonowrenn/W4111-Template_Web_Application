@@ -35,7 +35,6 @@ class MySQLDataService(AbstractBaseDataService):
         )
 
     def _parse_primary_key(self, primary_key: str) -> dict:
-        """Return a dict mapping each PK field to its value."""
         if len(self._primary_key_fields) == 1:
             return {self._primary_key_fields[0]: primary_key}
         parsed = json.loads(primary_key)
@@ -54,18 +53,63 @@ class MySQLDataService(AbstractBaseDataService):
             conn.close()
         return dict(row) if row else {}
 
-    def retrieveByTemplate(self, template: dict) -> list[dict]:
+    def retrieveByTemplate(
+        self,
+        template: dict,
+        limit: int | None = None,
+        offset: int | None = None,
+        order_by: str | None = None,
+    ) -> list[dict]:
+        params: list = []
         if template:
             where = " AND ".join(f"`{k}` = %s" for k in template)
             sql = f"SELECT * FROM `{self._table}` WHERE {where}"
-            params: list = list(template.values())
+            params = list(template.values())
         else:
             sql = f"SELECT * FROM `{self._table}`"
+
+        if order_by:
+            sql += f" ORDER BY `{order_by}`"
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(limit)
+        if offset is not None:
+            sql += " OFFSET %s"
+            params.append(offset)
+
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+        finally:
+            conn.close()
+        return [dict(r) for r in rows]
+
+    def count(self, template: dict) -> int:
+        """Return total row count matching template (for pagination metadata)."""
+        if template:
+            where = " AND ".join(f"`{k}` = %s" for k in template)
+            sql = f"SELECT COUNT(*) as n FROM `{self._table}` WHERE {where}"
+            params: list = list(template.values())
+        else:
+            sql = f"SELECT COUNT(*) as n FROM `{self._table}`"
             params = []
         conn = self._get_connection()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(sql, params)
+                row = cursor.fetchone()
+        finally:
+            conn.close()
+        return int(row["n"]) if row else 0
+
+    def execute_query(self, sql: str, params: list | None = None) -> list[dict]:
+        """Run arbitrary read-only SQL and return rows as dicts."""
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params or [])
                 rows = cursor.fetchall()
         finally:
             conn.close()
