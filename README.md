@@ -7,7 +7,7 @@ A production-style REST API built with **FastAPI** and **MySQL**, exposing the [
 ![MySQL](https://img.shields.io/badge/MySQL-8.0+-4479A1?logo=mysql&logoColor=white)
 ![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-000000?logo=vercel&logoColor=white)
 
-**Live API & Interactive Docs:** `https://<your-app>.vercel.app/docs`
+**Live API & Interactive Docs:** https://template-mauve-eight.vercel.app/docs
 
 ---
 
@@ -96,16 +96,16 @@ MySQL (classicmodels schema on Railway)
 
 ```bash
 # List US customers, 10 per page
-curl "https://<your-app>.vercel.app/customers?country=USA&limit=10"
+curl "https://template-mauve-eight.vercel.app/customers?country=USA&limit=10"
 
 # Get all orders for customer 103
-curl "https://<your-app>.vercel.app/customers/103/orders"
+curl "https://template-mauve-eight.vercel.app/customers/103/orders"
 
 # Get order 10100's line items with product details and totals
-curl "https://<your-app>.vercel.app/orders/10100/orderdetails"
+curl "https://template-mauve-eight.vercel.app/orders/10100/orderdetails"
 
 # Analytics snapshot
-curl "https://<your-app>.vercel.app/stats"
+curl "https://template-mauve-eight.vercel.app/stats"
 ```
 
 ---
